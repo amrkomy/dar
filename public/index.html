@@ -860,7 +860,7 @@
         let lastComplaintIds = new Set();
 
         // ✅ Realtime + إرسال إشعار حقيقي عبر Netlify Function
-     function startRealtimeListener() {
+    function startRealtimeListener() {
     supabase
         .channel('complaints-realtime')
         .on('postgres_changes', {
@@ -871,10 +871,7 @@
             const newComplaint = payload.new;
             console.log('✅ شكوى جديدة:', newComplaint);
 
-            // ❌ إزالة الصوت والـ showNotification
-            // (لأننا نعتمد على OneSignal Push فقط)
-
-            // ✅ إشعار داخلي (نص فقط بدون صوت)
+            // إشعار داخلي (نص فقط)
             showNewComplaintNotification(newComplaint);
 
             // ✅ إرسال إشعار حقيقي عبر Netlify Function
@@ -882,11 +879,13 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ complaint: newComplaint })
-            }).catch(err => console.error('فشل إرسال إشعار OneSignal:', err));
+            }).catch(err => {
+                console.error('❌ فشل إرسال إشعار OneSignal:', err);
+                showToast('فشل إرسال الإشعار الخارجي', 'error');
+            });
         })
         .subscribe();
 }
-
         // تحميل الشكاوى
         async function loadComplaints() {
             try {
