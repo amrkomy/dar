@@ -860,29 +860,32 @@
         let lastComplaintIds = new Set();
 
         // ✅ Realtime + إرسال إشعار حقيقي عبر Netlify Function
-        function startRealtimeListener() {
-            supabase
-                .channel('complaints-realtime')
-                .on('postgres_changes', {
-                    event: 'INSERT',
-                    schema: 'public',
-                    table: 'complaints'
-                }, (payload) => {
-                    const newComplaint = payload.new;
-                    console.log('✅ شكوى جديدة:', newComplaint);
+     function startRealtimeListener() {
+    supabase
+        .channel('complaints-realtime')
+        .on('postgres_changes', {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'complaints'
+        }, (payload) => {
+            const newComplaint = payload.new;
+            console.log('✅ شكوى جديدة:', newComplaint);
 
-                    // إشعار داخلي (نص فقط)
-                    showNewComplaintNotification(newComplaint);
+            // ❌ إزالة الصوت والـ showNotification
+            // (لأننا نعتمد على OneSignal Push فقط)
 
-                    // ✅ إرسال إشعار حقيقي إلى OneSignal
-                    fetch('/.netlify/functions/notify', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ complaint: newComplaint })
-                    }).catch(err => console.error('❌ فشل إرسال إشعار OneSignal:', err));
-                })
-                .subscribe();
-        }
+            // ✅ إشعار داخلي (نص فقط بدون صوت)
+            showNewComplaintNotification(newComplaint);
+
+            // ✅ إرسال إشعار حقيقي عبر Netlify Function
+            fetch('/.netlify/functions/notify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ complaint: newComplaint })
+            }).catch(err => console.error('فشل إرسال إشعار OneSignal:', err));
+        })
+        .subscribe();
+}
 
         // تحميل الشكاوى
         async function loadComplaints() {
