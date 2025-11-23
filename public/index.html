@@ -1010,17 +1010,19 @@
     let currentComplaintStatus = null;
     let selectedStatus = null;
     
-    // 🔥 الحل النهائي: استخدام localStorage لتخزين آخر ID
-    function getLastComplaintId() {
-        return parseInt(localStorage.getItem('lastComplaintId') || '0');
+    // 🔥 الحل النهائي: استخدام timestamp بدلاً من ID
+    function getLastNotificationTime() {
+        return localStorage.getItem('lastNotificationTime') || new Date().toISOString();
     }
     
-    function setLastComplaintId(id) {
-        localStorage.setItem('lastComplaintId', id.toString());
+    function setLastNotificationTime() {
+        localStorage.setItem('lastNotificationTime', new Date().toISOString());
     }
     
-    function getMaxComplaintId(complaints) {
-        return Math.max(...complaints.map(c => c.id), getLastComplaintId());
+    function shouldSendNotification(complaint) {
+        const complaintTime = new Date(complaint.created_at);
+        const lastNotificationTime = new Date(getLastNotificationTime());
+        return complaintTime > lastNotificationTime;
     }
 
     // ✅ نظام المراقبة الرئيسي
@@ -1074,12 +1076,12 @@
     function startPollingBackup() {
         console.log('🔄 تفعيل النظام الاحتياطي (Polling كل 3 ثواني)...');
         
-        // أول تحميل
-        loadComplaints();
+        // أول تحميل - بدون إرسال إشعارات للقديمة
+        loadComplaints(false);
         
-        // ثم كل 3 ثواني
+        // ثم كل 3 ثواني - مع إرسال إشعارات للجديدة
         setInterval(() => {
-            loadComplaints();
+            loadComplaints(true);
         }, 3000);
     }
 
@@ -1087,18 +1089,24 @@
     async function handleNewComplaint(newComplaint) {
         console.log('📝 معالجة شكوى جديدة:', newComplaint);
         
+        // التحقق من الوقت قبل إرسال الإشعار
+        if (!shouldSendNotification(newComplaint)) {
+            console.log('⏰ هذه الشكوى قديمة، لن يتم إرسال إشعار');
+            return;
+        }
+        
         // 1. إشعار داخلي
         showNewComplaintNotification(newComplaint);
         
         // 2. إرسال إشعار OneSignal
         await sendOneSignalNotification(newComplaint);
         
-        // 3. تحديث آخر ID في localStorage
-        setLastComplaintId(newComplaint.id);
+        // 3. تحديث وقت آخر إشعار
+        setLastNotificationTime();
         
         // 4. تحديث القائمة بعد ثانية
         setTimeout(() => {
-            loadComplaints();
+            loadComplaints(true);
         }, 1000);
     }
 
@@ -1133,7 +1141,7 @@
     }
 
     // ✅ تحميل الشكاوى من Supabase
-    async function loadComplaints() {
+    async function loadComplaints(sendNotifications = false) {
         try {
             let query = supabase
                 .from('complaints')
@@ -1160,41 +1168,40 @@
             renderComplaints();
             updateStats();
             
-            // 🔥 التحسين النهائي: استخدام localStorage للكشف عن الشكاوى الجديدة
-            checkForNewComplaints(data);
+            // 🔥 التحسين النهائي: إرسال إشعارات فقط إذا كان sendNotifications = true
+            if (sendNotifications) {
+                checkForNewComplaints(data);
+            }
             
         } catch (error) {
             console.error('Error loading complaints:', error);
         }
     }
 
-    // ✅ التحقق من الشكاوى الجديدة باستخدام localStorage
+    // ✅ التحقق من الشكاوى الجديدة باستخدام الوقت
     function checkForNewComplaints(currentData) {
         if (!currentData || currentData.length === 0) return;
         
-        const lastId = getLastComplaintId();
-        console.log(`🔍 آخر ID معروف: ${lastId}, عدد الشكاوى الحالية: ${currentData.length}`);
+        const lastNotificationTime = new Date(getLastNotificationTime());
+        console.log(`🔍 آخر وقت لإشعار: ${lastNotificationTime.toLocaleString('ar-EG')}`);
         
-        // إيجاد الشكاوى الجديدة (اللي IDها أكبر من آخر ID معروف)
-        const newComplaints = currentData.filter(complaint => complaint.id > lastId);
+        // إيجاد الشكاوى الجديدة (اللي created_at بعد آخر وقت إشعار)
+        const newComplaints = currentData.filter(complaint => {
+            const complaintTime = new Date(complaint.created_at);
+            return complaintTime > lastNotificationTime;
+        });
         
         if (newComplaints.length > 0) {
-            console.log(`🎉 تم اكتشاف ${newComplaints.length} شكوى جديدة!`, newComplaints.map(c => c.id));
+            console.log(`🎉 تم اكتشاف ${newComplaints.length} شكوى جديدة!`, 
+                newComplaints.map(c => ({id: c.id, time: c.created_at})));
             
             // نرتب الشكاوى من الأقدم للأحدث علشان نعالجهم بالترتيب
-            newComplaints.sort((a, b) => a.id - b.id);
+            newComplaints.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
             
             newComplaints.forEach(complaint => {
-                console.log('🆕 معالجة شكوى جديدة:', complaint.id, complaint.name);
+                console.log('🆕 معالجة شكوى جديدة:', complaint.id, complaint.name, complaint.created_at);
                 handleNewComplaint(complaint);
             });
-        }
-        
-        // تحديث آخر ID لأعلى ID في القائمة الحالية
-        const maxId = getMaxComplaintId(currentData);
-        if (maxId > lastId) {
-            setLastComplaintId(maxId);
-            console.log(`🔄 تم تحديث آخر ID إلى: ${maxId}`);
         }
     }
 
@@ -1448,7 +1455,7 @@
             
             showToast('تم تحديث حالة الشكوى بنجاح', 'success');
             complaintModal.style.display = 'none';
-            loadComplaints();
+            loadComplaints(true);
             
         } catch (error) {
             console.error('Error updating complaint status:', error);
@@ -1584,35 +1591,47 @@
 
     // عرض حالة النظام
     function showSystemStatus() {
-        const lastId = getLastComplaintId();
-        const statusMessage = `آخر ID معروف: ${lastId}\nعدد الشكاوى: ${complaints.length}`;
+        const lastTime = new Date(getLastNotificationTime());
+        const statusMessage = `آخر إشعار: ${lastTime.toLocaleString('ar-EG')}`;
         
         showToast(`حالة النظام: ${statusMessage}`, 'info');
-        console.log('📊 حالة النظام:', { lastId, complaintCount: complaints.length });
+        console.log('📊 حالة النظام:', { lastNotificationTime: lastTime });
     }
 
     // إعادة تعيين النظام
     function resetSystem() {
         console.log('🔄 إعادة تعيين النظام...');
-        localStorage.removeItem('lastComplaintId');
+        localStorage.removeItem('lastNotificationTime');
         showToast('تم إعادة تعيين النظام، سيتم اكتشاف جميع الشكاوى الجديدة', 'info');
         
         // إعادة تحميل البيانات
         setTimeout(() => {
-            loadComplaints();
+            loadComplaints(true);
         }, 1000);
+    }
+
+    // تعيين وقت البدء (لأول مرة)
+    function setStartTime() {
+        if (!localStorage.getItem('lastNotificationTime')) {
+            // إذا أول مرة، نضع الوقت الحالي كبداية
+            setLastNotificationTime();
+            console.log('⏰ تم تعيين وقت البدء:', new Date().toLocaleString('ar-EG'));
+        }
     }
 
     // تهيئة التطبيق
     async function initApp() {
         console.log('🚀 بدء تهيئة التطبيق...');
         
-        // عرض آخر ID معروف
-        const lastId = getLastComplaintId();
-        console.log(`📝 آخر ID معروف من الجلسة السابقة: ${lastId}`);
+        // تعيين وقت البدء إذا أول مرة
+        setStartTime();
         
-        // تحميل البيانات أولاً
-        await loadComplaints();
+        // عرض آخر وقت إشعار
+        const lastTime = new Date(getLastNotificationTime());
+        console.log(`⏰ آخر وقت لإشعار: ${lastTime.toLocaleString('ar-EG')}`);
+        
+        // تحميل البيانات أولاً - بدون إشعارات للقديمة
+        await loadComplaints(false);
         
         // بدء نظام المراقبة
         startMonitoringSystem();
@@ -1622,8 +1641,8 @@
         setupPWA();
 
         // إعداد event listeners
-        if (statusFilter) statusFilter.addEventListener('change', loadComplaints);
-        if (searchInput) searchInput.addEventListener('input', loadComplaints);
+        if (statusFilter) statusFilter.addEventListener('change', () => loadComplaints(true));
+        if (searchInput) searchInput.addEventListener('input', () => loadComplaints(true));
         if (closeModalBtn) closeModalBtn.addEventListener('click', () => complaintModal.style.display = 'none');
         if (closeModalBtn2) closeModalBtn2.addEventListener('click', () => complaintModal.style.display = 'none');
         
